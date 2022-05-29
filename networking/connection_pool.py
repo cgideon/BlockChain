@@ -12,49 +12,67 @@ class ConnectionPool:
         """
         message = dedent(f"""
         ===
-        ( Welcome {writer.nickname}!
+        Welcome {writer.nickname}!
         
         There are {len(self.connection_pool) - 1} user(s) here besides you
-        )
+
+        Help:
+            - Type anything to chat
+            - /list will list all the connected users
+            - /quit will disconnect you
+        
         ===
         """)
-        writer.write(f"{message\n".encode())
+
+        writer.write(f"{message}\n".encode())
 
     def broadcast(self, writer, message):
         """
         Broadcasts a general message to the entire pool
         """
-        pass
+        for user in self.connection_pool:
+            if user != writer:
+                # We don't need to also broadcast to the user sending the message
+                user.write(f"{message}\n".encode())
 
     def broadcast_user_join(self, writer):
         """
         Calls the broadcast method with a "user joining" message
         """
-        pass
+        self.broadcast(writer, f"{writer.nickname} just joined")
 
     def broadcast_user_quit(self, writer):
         """
         Calls the broadcast method with a "user quitting" message
         """
-        pass
+        self.broadcast(writer, f"{writer.nickname} just quit")
 
     def broadcast_new_message(self, writer, message):
         """
         Calls the broadcast method with a user's chat message
         """
-        pass
+        self.broadcast(writer, f"[{writer.nickname}]{message}")
 
     def list_users(self, writer):
         """
         Lists all the users in the pool
         """
-        pass
+        message = "===\n"
+        message += "Currently connected users:"
+        for user in self.connection_pool:
+            if user == writer:
+                message += f"\n - {user.nickname} (you)"
+            else:
+                message += f"\n - {user.nickname}"
+
+        message += "\n==="
+        writer.write(f"\n - {user.nickname}")
 
     def add_new_user_to_pool(self, writer):
         """
         Adds a new user to our existing pool
         """
-        pass
+        self.connection_pool.add(writer)
 
     def remove_user_from_pool(self, writer):
         """
@@ -64,17 +82,43 @@ class ConnectionPool:
 
 
 async def handle_connection(reader, writer):
-    writer.write("> Choose your nickanme: ".encode())
+    writer.write("> Choose your nickname: ".encode())
     response = await reader.readuntil(b"\n")
     writer.nickname = response.decode().strip()
+
     connection_pool.add_new_user_to_pool(writer)
     connection_pool.send_welcome_message(writer)
+    
 
+    # Announce the arrival of this new user
+    connection_pool.broadcast_user_join(writer)
 
-    await writer.drain()
+    while True:
+        try:
+            data = await reader.readuntil(b"\n")
+        except asyncio.exceptions.IncompleteReadError:
+            connection_pool.broadcast_user_quit(writer)
+            break
+        
+        message = data.decode().strip()
 
+        if message == "/quit":
+            connection_pool.broadcast_user_quit(writer)
+            break
+        elif message == "/list":
+            connection_pool.list_users(writer)
+        else:
+            connection_pool.broadcast_new_message(writer, message)
+
+        await writer.drain()
+
+        if writer.is_closing():
+            break
+
+    # We're outside the message loop, and the user has quit. Let's clean up...
     writer.close()
     await writer.wait_closed()
+    connection_pool.remove_user_from_pool(writer)
 
 
 
